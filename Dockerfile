@@ -36,7 +36,7 @@ EXPOSE 8000
 
 # Use Gunicorn with Uvicorn workers for production
 CMD ["uv", "run", "gunicorn", "app.main:app", \
-     "--workers", "2", \
+     "--workers", "1", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", \
      "--timeout", "120", \

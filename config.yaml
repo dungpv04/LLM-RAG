@@ -5,7 +5,7 @@ llm:
 
   # Model settings
   gemini:
-    model: "gemini-2.5-flash"  # Flash is much faster than Pro
+    model: "gemini-3-flash-preview"  # Flash is much faster than Pro
     embedding_model: "gemini-embedding-001"
     temperature: 0.7
     max_tokens: 20000
@@ -19,7 +19,7 @@ llm:
 # PDF Processing Configuration
 pdf:
   use_llm: true
-  llm_model: "gemini-2.5-flash"
+  llm_model: "gemini-3-flash-preview"
 
 # Chunking Configuration
 chunking:
