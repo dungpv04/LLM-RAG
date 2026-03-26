@@ -17,7 +17,7 @@ class DocumentService:
         embedding_service: EmbeddingService,
         doc_repository: DocumentRepository,
         pdf_processor: PDFProcessor,
-        storage_bucket: str = "documents"
+        storage_bucket: str = "pdfs"
     ):
         """
         Initialize document service.

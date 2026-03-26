@@ -30,5 +30,6 @@ def get_document_service() -> DocumentService:
         supabase_client=supabase_client,
         embedding_service=embedding_service,
         doc_repository=doc_repository,
-        pdf_processor=pdf_processor
+        pdf_processor=pdf_processor,
+        storage_bucket="pdfs"
     )
