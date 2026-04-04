@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from supabase import Client
 from app.services.pdf_processor.processor import PDFProcessor
 from app.services.embedding import EmbeddingService
+from app.services.storage import StorageService
 from app.db.repository import DocumentRepository
 
 
@@ -76,7 +77,7 @@ class DocumentService:
             document_name = os.path.basename(file_path).replace('.pdf', '')
 
         # Upload to Supabase Storage
-        storage_path = f"{document_name}.pdf"
+        storage_path = StorageService.sanitize_storage_path(f"{document_name}.pdf")
 
         with open(file_path, 'rb') as f:
             file_data = f.read()
@@ -102,16 +103,18 @@ class DocumentService:
         # Get public URL
         public_url = self.supabase_client.storage.from_(self.storage_bucket).get_public_url(storage_path)
 
-        # Process PDF into chunks
-        chunks = self.pdf_processor.process_pdf(file_path)
+        # Process PDF and create semantic chunks with page metadata
+        markdown_content, pdf_metadata = self.pdf_processor.process_pdf(file_path)
+        chunks = self.pdf_processor.chunk_text_with_pages(markdown_content, pdf_metadata)
 
         # Store chunks with embeddings
         for i, chunk in enumerate(chunks):
-            embedding = self.embedding_service.embed_text(chunk['content'])
+            chunk_text = chunk.get("text", "")
+            embedding = self.embedding_service.embed_text(chunk_text)
             self.doc_repository.insert_chunk(
                 document_name=document_name,
                 chunk_id=i,
-                content=chunk['content'],
+                content=chunk_text,
                 embedding=embedding,
                 metadata={
                     **chunk.get('metadata', {}),
@@ -189,7 +192,7 @@ class DocumentService:
         if success:
             # Try to delete from storage (best effort)
             try:
-                storage_path = f"{document_name}.pdf"
+                storage_path = StorageService.sanitize_storage_path(f"{document_name}.pdf")
                 self.supabase_client.storage.from_(self.storage_bucket).remove([storage_path])
             except Exception:
                 # If storage deletion fails, continue (chunks are already deleted)

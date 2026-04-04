@@ -1,5 +1,7 @@
 """Storage service for handling PDF uploads to Supabase Storage."""
 
+import re
+import unicodedata
 from pathlib import Path
 from typing import Optional
 from supabase import Client
@@ -7,6 +9,22 @@ from supabase import Client
 
 class StorageService:
     """Service for managing PDF storage in Supabase."""
+
+    @staticmethod
+    def sanitize_storage_path(file_name: str) -> str:
+        """Convert a file name into a Supabase-safe storage key."""
+        path = Path(file_name)
+        suffix = path.suffix.lower() or ".pdf"
+
+        stem = unicodedata.normalize("NFKD", path.stem)
+        stem = stem.encode("ascii", "ignore").decode("ascii")
+        stem = stem.lower()
+        stem = re.sub(r"[^a-z0-9]+", "-", stem).strip("-")
+
+        if not stem:
+            stem = "document"
+
+        return f"{stem}{suffix}"
 
     def __init__(self, client: Client, bucket_name: str = "pdfs"):
         """
@@ -38,6 +56,8 @@ class StorageService:
 
         if not destination_path:
             destination_path = file_path_obj.name
+
+        destination_path = self.sanitize_storage_path(destination_path)
 
         # Upload file (with upsert option)
         with open(file_path, "rb") as f:

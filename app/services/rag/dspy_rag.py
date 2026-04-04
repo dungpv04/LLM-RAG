@@ -1,22 +1,20 @@
 """DSPy RAG implementation with retrieval and optimization."""
 
 import dspy
+from app.prompts import DSPY_STUDENT_HANDBOOK_ANSWER_RULES
 
 
 class GenerateAnswer(dspy.Signature):
-    """Generate a comprehensive answer from context with citations."""
+    """Generate a formal Vietnamese answer from Student Handbook context with citations."""
 
     context: str = dspy.InputField(
-        desc="Retrieved passages from PDP8 regulation document, may include markdown tables"
+        desc="Retrieved passages from Student Handbook documents, with metadata (document and page/section)"
     )
     question: str = dspy.InputField(
-        desc="User's question about Vietnam's electricity development plan"
+        desc="Student question about academic regulations, policies, or handbook procedures"
     )
     answer: str = dspy.OutputField(
-        desc="Comprehensive answer in clear paragraphs. Use **bold** for key terms. "
-             "Cite sources with [N] format. Separate different aspects into distinct paragraphs with blank lines. "
-             "IMPORTANT: If the context contains markdown tables with relevant data, preserve them in your answer using proper markdown table syntax. "
-             "Present numerical data, lists of projects, or comparisons in table format when appropriate."
+        desc=DSPY_STUDENT_HANDBOOK_ANSWER_RULES
     )
 
 

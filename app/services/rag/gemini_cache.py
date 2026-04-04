@@ -2,6 +2,7 @@
 
 from typing import Optional, List, Dict, Any
 from app.services.rag.cache_registry import get_cache_name as get_cache_from_redis, set_cache_name as set_cache_in_redis
+from app.prompts import STUDENT_HANDBOOK_SYSTEM_RULES
 from google import genai
 from google.genai import types
 import os
@@ -27,7 +28,9 @@ class GeminiCacheService:
         self,
         doc_name: str,
         chunks: List[Dict[str, Any]],
-        ttl_hours: int = 1
+        ttl_hours: int = 1,
+        max_chunks: int = 24,
+        max_chars: int = 50000,
     ) -> Optional[str]:
         """
         Create a context cache for document chunks.
@@ -41,14 +44,25 @@ class GeminiCacheService:
             Cache name if successful, None otherwise
         """
         try:
-            # Format chunks into context
+            # Bound cache size so single-document chat stays fast and predictable.
             context_parts = []
-            for i, chunk in enumerate(chunks, 1):
+            total_chars = 0
+            for i, chunk in enumerate(chunks[:max_chunks], 1):
                 content = chunk.get("content", "")
                 page_range = chunk.get("page_range", "unknown")
-                context_parts.append(
-                    f"[Source {i}] (Pages: {page_range})\n{content}\n"
-                )
+                entry = f"[Source {i}] (Pages: {page_range})\n{content}\n"
+
+                if total_chars + len(entry) > max_chars:
+                    remaining = max_chars - total_chars
+                    if remaining <= 0:
+                        break
+                    entry = entry[:remaining]
+
+                context_parts.append(entry)
+                total_chars += len(entry)
+
+                if total_chars >= max_chars:
+                    break
 
             full_context = "\n\n".join(context_parts)
 
@@ -58,11 +72,7 @@ class GeminiCacheService:
                 return None
 
             # Create cache
-            system_instruction = (
-                "You are an expert analyst of Vietnam's Power Development Plan VIII (PDP8). "
-                "Answer questions based on the provided document context. "
-                "Use **bold** for key terms, cite sources with [N] format, and preserve tables."
-            )
+            system_instruction = STUDENT_HANDBOOK_SYSTEM_RULES
 
             cache = self.client.caches.create(
                 model=self.model,

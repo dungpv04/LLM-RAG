@@ -1,6 +1,7 @@
 """Multi-hop RAG implementation for complex queries."""
 
 import dspy
+from app.prompts import DSPY_STUDENT_HANDBOOK_ANSWER_RULES
 
 
 class GenerateSearchQuery(dspy.Signature):
@@ -12,17 +13,14 @@ class GenerateSearchQuery(dspy.Signature):
 
 
 class GenerateAnswer(dspy.Signature):
-    """Generate a comprehensive answer from multi-hop context with citations."""
+    """Generate a formal Vietnamese answer from multi-hop Student Handbook context with citations."""
 
     context: str = dspy.InputField(
-        desc="Retrieved passages from multiple retrieval hops, may include markdown tables"
+        desc="Retrieved passages from multiple retrieval hops across Student Handbook documents with metadata"
     )
     question: str = dspy.InputField(desc="Question to answer")
     answer: str = dspy.OutputField(
-        desc="Comprehensive answer in clear paragraphs. Use **bold** for key terms. "
-             "Cite sources with [N] format. Separate different aspects into distinct paragraphs with blank lines. "
-             "IMPORTANT: If the context contains markdown tables with relevant data, preserve them in your answer using proper markdown table syntax. "
-             "Present numerical data, lists of projects, or comparisons in table format when appropriate."
+        desc=DSPY_STUDENT_HANDBOOK_ANSWER_RULES
     )
 
 

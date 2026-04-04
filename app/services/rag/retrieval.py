@@ -1,6 +1,7 @@
 """Retrieval service for RAG with multi-document search and reranking."""
 
 from typing import List, Dict, Any, Optional
+import time
 from supabase import Client
 from app.services.embedding import EmbeddingService
 from app.services.reranker import RerankerService
@@ -39,8 +40,11 @@ class RetrievalService:
             try:
                 app_config = get_app_config()
                 reranker_model = app_config.rag.reranking.model
-                # Use CPU for reranking to avoid MPS memory issues on Mac
-                self.reranker = RerankerService(model_name=reranker_model, force_cpu=True)
+                reranker_force_cpu = app_config.rag.reranking.force_cpu
+                self.reranker = RerankerService(
+                    model_name=reranker_model,
+                    force_cpu=reranker_force_cpu,
+                )
             except Exception as e:
                 print(f"Warning: Could not initialize reranker: {e}")
                 self.use_reranking = False
@@ -69,8 +73,12 @@ class RetrievalService:
         Returns:
             List of retrieved chunks with metadata
         """
+        overall_start = time.time()
+
         # Generate query embedding once
+        embedding_start = time.time()
         query_embedding = self.embedding_service.embed_text(query)
+        print(f"[TIMING] Retrieval embedding completed in {time.time() - embedding_start:.2f}s")
 
         # If doc_names or document_name specified, do filtered search
         if doc_names is not None or document_name is not None:
@@ -86,19 +94,27 @@ class RetrievalService:
             # Get more results if we're going to rerank
             limit = self.top_k * 2 if should_rerank else self.top_k
 
+            search_start = time.time()
             results = self.doc_repo.search_similar(
                 query_embedding=query_embedding,
                 limit=limit,
                 document_name=document_name,
                 doc_names=doc_names
             )
+            print(
+                f"[TIMING] Retrieval search completed in {time.time() - search_start:.2f}s "
+                f"for {len(results)} chunk(s)"
+            )
 
             # Rerank only for multi-document queries
             if should_rerank and results:
+                rerank_start = time.time()
                 results = self.reranker.rerank(query, results, top_k=self.top_k)
+                print(f"[TIMING] Retrieval rerank completed in {time.time() - rerank_start:.2f}s")
             else:
                 results = results[:self.top_k]
 
+            print(f"[TIMING] Total filtered retrieval completed in {time.time() - overall_start:.2f}s")
             return results
         else:
             # Multi-document search with reranking
@@ -133,6 +149,8 @@ class RetrievalService:
         """
         app_config = get_app_config()
 
+        overall_start = time.time()
+
         # Stage 1 parameters: Quick scan
         initial_chunks_per_doc = getattr(app_config.rag.retrieval, "initial_chunks_per_doc", 2)
         top_n_documents = getattr(app_config.rag.retrieval, "top_n_documents", 5)
@@ -151,6 +169,7 @@ class RetrievalService:
         document_scores = {}
         initial_results = []
 
+        stage1_start = time.time()
         for doc_name in all_documents:
             doc_results = self.doc_repo.search_similar(
                 query_embedding=query_embedding,
@@ -165,6 +184,7 @@ class RetrievalService:
                 initial_results.extend(doc_results)
 
         print(f"[DEBUG] Stage 1: Got {len(initial_results)} chunks from initial scan")
+        print(f"[TIMING] Stage 1 completed in {time.time() - stage1_start:.2f}s")
 
         # Rank documents by their best similarity scores
         ranked_documents = sorted(
@@ -181,6 +201,7 @@ class RetrievalService:
         print(f"[DEBUG] Stage 2: Deep search in top {len(top_doc_names)} documents")
         deep_results = []
 
+        stage2_start = time.time()
         for doc_name in top_doc_names:
             doc_results = self.doc_repo.search_similar(
                 query_embedding=query_embedding,
@@ -191,6 +212,7 @@ class RetrievalService:
             deep_results.extend(doc_results)
 
         print(f"[DEBUG] Stage 2: Total {len(deep_results)} chunks before reranking")
+        print(f"[TIMING] Stage 2 completed in {time.time() - stage2_start:.2f}s")
 
         if not deep_results:
             return []
@@ -198,7 +220,9 @@ class RetrievalService:
         # Stage 3: Rerank combined results if enabled
         if self.use_reranking and self.reranker:
             print(f"[DEBUG] Stage 3: Reranking {len(deep_results)} results to top {self.top_k}")
+            stage3_start = time.time()
             final_results = self.reranker.rerank(query, deep_results, top_k=self.top_k)
+            print(f"[TIMING] Stage 3 reranking completed in {time.time() - stage3_start:.2f}s")
         else:
             # Fallback: sort by embedding similarity
             final_results = sorted(
@@ -208,6 +232,7 @@ class RetrievalService:
             )[:self.top_k]
 
         print(f"[DEBUG] Stage 3: Final results count: {len(final_results)}")
+        print(f"[TIMING] Total multi-document retrieval completed in {time.time() - overall_start:.2f}s")
         return final_results
 
     def format_context(self, chunks: List[Dict[str, Any]]) -> str:

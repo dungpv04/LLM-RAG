@@ -175,11 +175,15 @@ class RAGService:
         import threading
         import time
 
+        request_start = time.time()
+
         # Fast path: Use cached context for document-filtered queries (single or multiple)
         if doc_names and len(doc_names) <= 3:  # Support up to 3 documents with caching
             # Create a combined cache key for multiple documents
             cache_key = "|".join(sorted(doc_names))
             cache_name = self.cache_service.get_cache_name(cache_key)
+            cache_lookup_elapsed = time.time() - request_start
+            print(f"[TIMING] Cache lookup completed in {cache_lookup_elapsed:.2f}s for key '{cache_key}'")
 
             # If cache doesn't exist, create it
             if not cache_name:
@@ -190,12 +194,15 @@ class RAGService:
                     self.retrieval_service.doc_repo.get_all_chunks_by_names,
                     doc_names
                 )
-                print(f"[CACHE] Fetched {len(chunks)} total chunks from {len(doc_names)} document(s)")
+                print(
+                    f"[TIMING] Cache source fetch completed in {time.time() - start:.2f}s "
+                    f"for {len(chunks)} total chunks from {len(doc_names)} document(s)"
+                )
                 cache_name = await asyncio.to_thread(
                     self.cache_service.create_document_cache,
                     cache_key,
                     chunks,
-                    ttl_hours=1
+                    ttl_hours=1,
                 )
                 print(f"[CACHE] Cache created in {time.time() - start:.2f}s")
 
@@ -205,26 +212,54 @@ class RAGService:
                 strategy = f"cached-{'single' if num_docs == 1 else 'multi'}-hop"
                 print(f"[CACHE] Using cached context for {num_docs} document(s)")
                 try:
-                    # Do retrieval in parallel for source attribution (needed by FE)
-                    retrieval_task = asyncio.create_task(
-                        asyncio.to_thread(
-                            self.retrieval_service.retrieve,
-                            query=question,
-                            doc_names=doc_names
+                    retrieval_task = None
+                    if num_docs > 1:
+                        # Multi-document cached responses still benefit from retrieval-based source selection.
+                        retrieval_task = asyncio.create_task(
+                            asyncio.to_thread(
+                                self.retrieval_service.retrieve,
+                                query=question,
+                                doc_names=doc_names
+                            )
                         )
-                    )
 
                     # Stream from cached context (fast generation)
+                    generation_start = time.time()
+                    first_token_at = None
                     async for token in self.cache_service.generate_with_cache_stream(
                         cache_name=cache_name,
                         question=question,
                         temperature=self.app_config.llm.gemini.temperature,
-                        max_tokens=self.app_config.llm.gemini.max_tokens
+                        max_tokens=self.app_config.rag.generation.max_tokens
                     ):
+                        if first_token_at is None:
+                            first_token_at = time.time()
+                            print(
+                                f"[TIMING] Cached generation first token in "
+                                f"{first_token_at - generation_start:.2f}s"
+                            )
                         yield {"type": "token", "content": token}
+                    print(f"[TIMING] Cached generation completed in {time.time() - generation_start:.2f}s")
 
-                    # Wait for retrieval to finish and get sources
-                    retrieved_chunks = await retrieval_task
+                    # For single-document cached queries, use a lightweight source attribution path.
+                    if num_docs == 1:
+                        retrieval_start = time.time()
+                        retrieved_chunks = await asyncio.to_thread(
+                            self.retrieval_service.retrieve,
+                            query=question,
+                            doc_names=doc_names
+                        )
+                        print(
+                            f"[TIMING] Single-document retrieval for sources completed in "
+                            f"{time.time() - retrieval_start:.2f}s"
+                        )
+                    else:
+                        retrieved_chunks = await retrieval_task if retrieval_task else []
+                        print(
+                            f"[TIMING] Multi-document retrieval for sources completed in "
+                            f"{time.time() - generation_start:.2f}s (overlapped with generation)"
+                        )
+
                     sources = [
                         {
                             "content": chunk.get("content", ""),
@@ -244,6 +279,7 @@ class RAGService:
                         "sources": sources,
                         "is_optimized": True
                     }
+                    print(f"[TIMING] Total cached query_stream completed in {time.time() - request_start:.2f}s")
                     return
                 except Exception as e:
                     print(f"[CACHE] Error using cache, falling back to DSPy: {e}")
@@ -319,6 +355,9 @@ class RAGService:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Internal implementation of query_stream within DSPy context."""
         import asyncio
+        import time
+
+        stream_start = time.time()
 
         # Set doc_ids on RAG module if provided
         if doc_names is not None and hasattr(self.rag, 'doc_names'):
@@ -388,11 +427,15 @@ class RAGService:
 
         final_prediction = None
         streamed_tokens = False
+        first_token_at = None
 
         async for chunk in output_stream:
             if isinstance(chunk, dspy.streaming.StreamResponse):  # type: ignore
                 # True streaming token received from DSPy
                 streamed_tokens = True
+                if first_token_at is None:
+                    first_token_at = time.time()
+                    print(f"[TIMING] DSPy first token in {first_token_at - stream_start:.2f}s")
                 yield {
                     "type": "token",
                     "content": chunk.chunk
@@ -403,6 +446,7 @@ class RAGService:
 
                 # If DSPy didn't stream (Gemini doesn't support it), simulate streaming
                 if not streamed_tokens and hasattr(chunk, 'answer'):
+                    print(f"[TIMING] DSPy answer ready for simulated streaming in {time.time() - stream_start:.2f}s")
                     answer = chunk.answer
                     # Stream word-by-word while preserving newlines
                     import re
@@ -448,4 +492,5 @@ class RAGService:
                     for chunk in final_prediction.chunks
                 ]
 
+            print(f"[TIMING] DSPy streaming path completed in {time.time() - stream_start:.2f}s")
             yield metadata

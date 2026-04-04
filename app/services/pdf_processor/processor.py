@@ -29,8 +29,15 @@ class PDFProcessor:
         config = {
             "output_format": "markdown",
             "use_llm": pdf_config.use_llm,
+            # marker expects `gemini_model_name`; `llm_model` is ignored by its Gemini service
+            "gemini_model_name": pdf_config.llm_model,
+            # keep legacy key for compatibility with any older custom marker wiring
             "llm_model": pdf_config.llm_model,
             "gemini_api_key": settings.google_api_key,
+            # Increase tolerance for slower Gemini responses to reduce DEADLINE_EXCEEDED failures
+            "timeout": pdf_config.llm_timeout,
+            "max_retries": pdf_config.llm_max_retries,
+            "retry_wait_time": pdf_config.llm_retry_wait_time,
             "extract_tables": True,
         }
 

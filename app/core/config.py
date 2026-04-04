@@ -26,6 +26,9 @@ class PDFConfig(BaseModel):
     """PDF processing configuration."""
     use_llm: bool
     llm_model: str
+    llm_timeout: int = 90
+    llm_max_retries: int = 3
+    llm_retry_wait_time: int = 5
 
 
 class ChunkingConfig(BaseModel):
@@ -47,6 +50,9 @@ class RetrievalConfig(BaseModel):
     similarity_threshold: float
     per_document_k: int = 10
     use_reranking: bool = True
+    initial_chunks_per_doc: int = 2
+    top_n_documents: int = 5
+    deep_chunks_per_doc: int = 6
 
 
 class GenerationConfig(BaseModel):
@@ -66,6 +72,7 @@ class RerankingConfig(BaseModel):
     """Reranking configuration."""
     model: str = "BAAI/bge-reranker-v2-m3"
     enabled: bool = True
+    force_cpu: bool = False
 
 
 class RAGConfig(BaseModel):
