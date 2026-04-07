@@ -26,7 +26,9 @@ class AdaptiveRAG(dspy.Module):
         retrieval_service,
         single_hop_passages: int = 10,
         max_hops: int = 4,
-        passages_per_hop: int = 4
+        passages_per_hop: int = 4,
+        single_hop_module: RAGModule | None = None,
+        multi_hop_module: MultiHopRAG | None = None
     ):
         """
         Initialize adaptive RAG.
@@ -36,16 +38,18 @@ class AdaptiveRAG(dspy.Module):
             single_hop_passages: Number of passages for single-hop
             max_hops: Maximum hops for multi-hop
             passages_per_hop: Passages per hop for multi-hop
+            single_hop_module: Optional preloaded single-hop module
+            multi_hop_module: Optional preloaded multi-hop module
         """
         super().__init__()
         self.retrieval_service = retrieval_service
 
         # Initialize both RAG strategies
-        self.single_hop = RAGModule(
+        self.single_hop = single_hop_module or RAGModule(
             retrieval_service=retrieval_service,
             num_passages=single_hop_passages
         )
-        self.multi_hop = MultiHopRAG(
+        self.multi_hop = multi_hop_module or MultiHopRAG(
             retrieval_service=retrieval_service,
             max_hops=max_hops,
             passages_per_hop=passages_per_hop

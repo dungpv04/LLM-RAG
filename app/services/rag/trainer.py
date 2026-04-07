@@ -1,10 +1,15 @@
-"""Training and optimization for DSPy RAG."""
+"""Training and optimization helpers for DSPy RAG modules."""
 
 import json
 import dspy
 from pathlib import Path
 from typing import List
 from app.services.rag.dspy_rag import RAGModule, validate_answer, answer_correctness_metric
+from app.services.rag.multihop_rag import MultiHopRAG
+
+
+OPTIMIZED_SINGLE_HOP_MODEL_PATH = "models/optimized_rag.json"
+OPTIMIZED_MULTI_HOP_MODEL_PATH = "models/optimized_multihop_rag.json"
 
 
 def create_training_example(question: str, answer: str) -> dspy.Example:
@@ -151,19 +156,63 @@ def save_optimized_model(optimized_rag: RAGModule, output_path: str):
     print(f"\n✓ Optimized model saved to: {output_path_obj}")
 
 
-def load_optimized_model(model_path: str, retrieval_service) -> RAGModule:
+def load_optimized_single_hop_model(
+    model_path: str,
+    retrieval_service,
+    num_passages: int = 5
+) -> RAGModule:
     """
-    Load optimized RAG module.
+    Load optimized single-hop RAG module.
 
     Args:
         model_path: Path to saved model
         retrieval_service: Retrieval service instance
+        num_passages: Number of passages for the base module shape
 
     Returns:
         Loaded RAG module
     """
-    rag_module = RAGModule(retrieval_service=retrieval_service)
+    rag_module = RAGModule(
+        retrieval_service=retrieval_service,
+        num_passages=num_passages
+    )
     rag_module.load(model_path)
 
-    print(f"✓ Loaded optimized model from: {model_path}")
+    print(f"✓ Loaded optimized single-hop model from: {model_path}")
     return rag_module
+
+
+def load_optimized_multi_hop_model(
+    model_path: str,
+    retrieval_service,
+    max_hops: int = 3,
+    passages_per_hop: int = 3
+) -> MultiHopRAG:
+    """
+    Load optimized multi-hop RAG module.
+
+    Args:
+        model_path: Path to saved model
+        retrieval_service: Retrieval service instance
+        max_hops: Maximum number of retrieval hops
+        passages_per_hop: Number of passages to retrieve per hop
+
+    Returns:
+        Loaded multi-hop RAG module
+    """
+    rag_module = MultiHopRAG(
+        retrieval_service=retrieval_service,
+        max_hops=max_hops,
+        passages_per_hop=passages_per_hop
+    )
+    rag_module.load(model_path)
+
+    print(f"✓ Loaded optimized multi-hop model from: {model_path}")
+    return rag_module
+
+
+def load_optimized_model(model_path: str, retrieval_service) -> RAGModule:
+    """
+    Backward-compatible alias for loading the optimized single-hop RAG module.
+    """
+    return load_optimized_single_hop_model(model_path, retrieval_service)

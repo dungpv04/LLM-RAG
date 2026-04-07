@@ -11,7 +11,12 @@ from app.services.rag.retrieval import RetrievalService
 from app.services.rag.dspy_rag import RAGModule
 from app.services.rag.multihop_rag import MultiHopRAG
 from app.services.rag.adaptive_rag import AdaptiveRAG
-from app.services.rag.trainer import load_optimized_model
+from app.services.rag.trainer import (
+    OPTIMIZED_MULTI_HOP_MODEL_PATH,
+    OPTIMIZED_SINGLE_HOP_MODEL_PATH,
+    load_optimized_multi_hop_model,
+    load_optimized_single_hop_model,
+)
 from app.services.rag.gemini_cache import GeminiCacheService
 
 
@@ -30,6 +35,7 @@ class RAGService:
         self.settings = get_settings()
         self.app_config = get_app_config()
         self.rag: Union[AdaptiveRAG, MultiHopRAG, RAGModule, dspy.Module]
+        self._strategy_optimized_status: dict[str, bool] = {}
 
         # Configure DSPy only if requested (to avoid async task conflicts)
         # Note: For async contexts, DSPy configuration should be done once at startup
@@ -64,41 +70,85 @@ class RAGService:
         mode = self.app_config.rag.mode.lower()
 
         if mode == "adaptive":
-            # Use adaptive RAG that chooses strategy based on query
+            # Use adaptive RAG that chooses between the optimized single-hop and multi-hop modules.
+            single_hop_module, single_hop_optimized = self._build_single_hop_module(use_optimized)
+            multi_hop_module, multi_hop_optimized = self._build_multi_hop_module(use_optimized)
             self.rag = AdaptiveRAG(
                 retrieval_service=self.retrieval_service,
                 single_hop_passages=self.app_config.rag.retrieval.top_k,
                 max_hops=self.app_config.rag.multihop.max_hops,
-                passages_per_hop=self.app_config.rag.multihop.passages_per_hop
+                passages_per_hop=self.app_config.rag.multihop.passages_per_hop,
+                single_hop_module=single_hop_module,
+                multi_hop_module=multi_hop_module,
             )
             self.mode = "adaptive"
-            self.is_optimized = False
+            self._strategy_optimized_status = {
+                "single-hop": single_hop_optimized,
+                "multi-hop": multi_hop_optimized,
+            }
+            self.is_optimized = single_hop_optimized and multi_hop_optimized
         elif mode == "multi-hop":
-            # Force multi-hop RAG
-            self.rag = MultiHopRAG(
+            self.rag, self.is_optimized = self._build_multi_hop_module(use_optimized)
+            self.mode = "multi-hop"
+            self._strategy_optimized_status = {"multi-hop": self.is_optimized}
+        elif mode == "single-hop":
+            self.rag, self.is_optimized = self._build_single_hop_module(use_optimized)
+            self.mode = "single-hop"
+            self._strategy_optimized_status = {"single-hop": self.is_optimized}
+        else:
+            raise ValueError(f"Invalid RAG mode: {mode}. Must be 'adaptive', 'single-hop', or 'multi-hop'.")
+
+    def _build_single_hop_module(self, use_optimized: bool) -> tuple[RAGModule, bool]:
+        """Build the single-hop module, preferring the optimized artifact when available."""
+        if use_optimized and Path(OPTIMIZED_SINGLE_HOP_MODEL_PATH).exists():
+            return (
+                load_optimized_single_hop_model(
+                    OPTIMIZED_SINGLE_HOP_MODEL_PATH,
+                    self.retrieval_service,
+                    num_passages=self.app_config.rag.retrieval.top_k,
+                ),
+                True,
+            )
+
+        return (
+            RAGModule(
+                retrieval_service=self.retrieval_service,
+                num_passages=self.app_config.rag.retrieval.top_k
+            ),
+            False,
+        )
+
+    def _build_multi_hop_module(self, use_optimized: bool) -> tuple[MultiHopRAG, bool]:
+        """Build the multi-hop module, preferring the optimized artifact when available."""
+        if use_optimized and Path(OPTIMIZED_MULTI_HOP_MODEL_PATH).exists():
+            return (
+                load_optimized_multi_hop_model(
+                    OPTIMIZED_MULTI_HOP_MODEL_PATH,
+                    self.retrieval_service,
+                    max_hops=self.app_config.rag.multihop.max_hops,
+                    passages_per_hop=self.app_config.rag.multihop.passages_per_hop,
+                ),
+                True,
+            )
+
+        return (
+            MultiHopRAG(
                 retrieval_service=self.retrieval_service,
                 max_hops=self.app_config.rag.multihop.max_hops,
                 passages_per_hop=self.app_config.rag.multihop.passages_per_hop
-            )
-            self.mode = "multi-hop"
-            self.is_optimized = False
-        elif mode == "single-hop":
-            # Use single-hop (optimized if available)
-            if use_optimized and Path("models/optimized_rag.json").exists():
-                self.rag = load_optimized_model(
-                    "models/optimized_rag.json",
-                    self.retrieval_service
-                )
-                self.is_optimized = True
-            else:
-                self.rag = RAGModule(
-                    retrieval_service=self.retrieval_service,
-                    num_passages=self.app_config.rag.retrieval.top_k
-                )
-                self.is_optimized = False
-            self.mode = "single-hop"
-        else:
-            raise ValueError(f"Invalid RAG mode: {mode}. Must be 'adaptive', 'single-hop', or 'multi-hop'.")
+            ),
+            False,
+        )
+
+    def _is_strategy_optimized(self, strategy: str | None) -> bool:
+        """Return whether the effective strategy is using an optimized saved artifact."""
+        if not strategy:
+            return self.is_optimized
+
+        if strategy.startswith("cached-"):
+            return True
+
+        return self._strategy_optimized_status.get(strategy, self.is_optimized)
 
     def query(self, question: str, document_name: Optional[str] = None, doc_names: Optional[List[str]] = None) -> Dict[str, Any]:
         """
@@ -124,15 +174,16 @@ class RAGService:
         print(f"[TIMING] DSPy RAG completed in {time.time() - start_time:.2f}s")
 
         # Extract response
+        strategy = prediction.strategy if hasattr(prediction, 'strategy') else self.mode
         response = {
             "question": question,
             "answer": prediction.answer if hasattr(prediction, 'answer') else str(prediction),
             "reasoning": prediction.rationale if hasattr(prediction, 'rationale') else None,
             "sources": [],
             "mode": self.mode,
-            "strategy": prediction.strategy if hasattr(prediction, 'strategy') else self.mode,
+            "strategy": strategy,
             "strategy_reasoning": prediction.strategy_reasoning if hasattr(prediction, 'strategy_reasoning') else None,
-            "is_optimized": self.is_optimized
+            "is_optimized": self._is_strategy_optimized(strategy)
         }
 
         # Add source chunks if available
@@ -469,13 +520,14 @@ class RAGService:
                 final_prediction.strategy = strategy
                 final_prediction.strategy_reasoning = strategy_reasoning
 
+            strategy_name = final_prediction.strategy if hasattr(final_prediction, 'strategy') else self.mode
             metadata = {
                 "type": "metadata",
                 "reasoning": final_prediction.rationale if hasattr(final_prediction, 'rationale') else None,
                 "mode": self.mode,
-                "strategy": final_prediction.strategy if hasattr(final_prediction, 'strategy') else self.mode,
+                "strategy": strategy_name,
                 "strategy_reasoning": final_prediction.strategy_reasoning if hasattr(final_prediction, 'strategy_reasoning') else None,
-                "is_optimized": self.is_optimized,
+                "is_optimized": self._is_strategy_optimized(strategy_name),
                 "sources": []
             }
 
