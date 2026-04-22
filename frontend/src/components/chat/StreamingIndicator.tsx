@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react';
 import { Bot } from 'lucide-react';
 
 const STREAMING_STAGES = [
-  { time: 0, message: "Analyzing documents..." },
-  { time: 15, message: "Processing your query..." },
-  { time: 30, message: "Searching through regulations..." },
-  { time: 45, message: "Generating response..." },
-  { time: 70, message: "Compiling final answer..." },
-  { time: 100, message: "Almost done..." },
+  { time: 0, message: "Đang phân tích tài liệu..." },
+  { time: 15, message: "Đang xử lý câu hỏi của bạn..." },
+  { time: 30, message: "Đang tìm kiếm trong các quy định..." },
+  { time: 45, message: "Đang tạo câu trả lời..." },
+  { time: 70, message: "Đang hoàn thiện phản hồi..." },
+  { time: 100, message: "Sắp xong..." },
 ];
 
 

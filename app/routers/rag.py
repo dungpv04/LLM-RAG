@@ -1,11 +1,12 @@
 """RAG API endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, Any, Optional
+from app.core.auth import require_admin
 from app.services.rag.service import RAGService
 from app.schemas.rag import QueryRequest, QueryResponse
 
-router = APIRouter(prefix="/rag", tags=["RAG"])
+router = APIRouter(prefix="/rag", tags=["RAG"], dependencies=[Depends(require_admin)])
 
 # Initialize RAG service (singleton)
 rag_service: Optional[RAGService] = None

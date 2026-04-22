@@ -1,15 +1,17 @@
 """Cache management endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from app.core.auth import require_admin
 from app.services.rag.dependencies import get_rag_service
-from app.db.dependencies import get_document_repository, get_supabase_client
-from typing import List, Dict, Any
+from app.db.dependencies import get_supabase_client
+from app.db.repository import get_document_repository
+from typing import List, Dict, Any, Optional
 
-router = APIRouter(prefix="/cache", tags=["cache"])
+router = APIRouter(prefix="/cache", tags=["cache"], dependencies=[Depends(require_admin)])
 
 
 @router.post("/warmup")
-async def warmup_cache(doc_names: List[str] = None) -> Dict[str, Any]:
+async def warmup_cache(doc_names: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Pre-cache documents for fast queries.
 
@@ -95,7 +97,7 @@ async def cache_status() -> Dict[str, Any]:
 
 
 @router.delete("/clear")
-async def clear_cache(doc_name: str = None) -> Dict[str, str]:
+async def clear_cache(doc_name: Optional[str] = None) -> Dict[str, str]:
     """
     Clear document cache(s).
 

@@ -1,29 +1,49 @@
 """Authentication API endpoints backed by Supabase Auth."""
 
+import re
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from app.core.auth import AuthenticatedUser, get_current_user
-from app.db.dependencies import get_supabase_auth_client
+from app.core.auth import (
+    AuthenticatedUser,
+    get_current_user,
+    to_authenticated_user,
+)
+from app.core.config import get_settings
+from app.db.dependencies import get_supabase_auth_client, get_supabase_client
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-class SignUpRequest(BaseModel):
-    """Request body for account registration."""
+class EmailPasswordRequest(BaseModel):
+    """Base model for email/password auth requests."""
 
     email: str = Field(..., min_length=3)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        """Trim, lowercase, and validate an email address before Supabase."""
+        email = value.strip().lower()
+        if not EMAIL_PATTERN.fullmatch(email):
+            raise ValueError("Enter a valid email address, for example user@example.com")
+        return email
+
+
+class SignUpRequest(EmailPasswordRequest):
+    """Request body for account registration."""
+
     password: str = Field(..., min_length=6)
     full_name: Optional[str] = None
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(EmailPasswordRequest):
     """Request body for password login."""
 
-    email: str = Field(..., min_length=3)
     password: str
 
 
@@ -54,27 +74,6 @@ def _get_attr(obj: Any, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
-
-
-def _authenticated_user_from_supabase(user: Any) -> AuthenticatedUser:
-    """Build route response user context from Supabase user."""
-    app_metadata = _get_attr(user, "app_metadata", {}) or {}
-    user_metadata = _get_attr(user, "user_metadata", {}) or {}
-    roles = app_metadata.get("roles") or []
-    role = app_metadata.get("role") or "user"
-
-    if role == "admin" or "admin" in roles:
-        role = "admin"
-    else:
-        role = "user"
-
-    return AuthenticatedUser(
-        id=str(_get_attr(user, "id")),
-        email=_get_attr(user, "email"),
-        role=role,
-        app_metadata=app_metadata,
-        user_metadata=user_metadata,
-    )
 
 
 def _set_auth_cookies(response: Response, session: Any) -> None:
@@ -125,7 +124,7 @@ def _build_auth_response(auth_response: Any) -> AuthSessionResponse:
         refresh_token=_get_attr(session, "refresh_token") if session else None,
         token_type=_get_attr(session, "token_type", "bearer") if session else "bearer",
         expires_in=_get_attr(session, "expires_in") if session else None,
-        user=_authenticated_user_from_supabase(user),
+        user=to_authenticated_user(user),
     )
 
 
@@ -134,21 +133,40 @@ async def signup(request: SignUpRequest, response: Response) -> AuthSessionRespo
     """
     Create a Supabase Auth user.
 
-    New accounts always receive the user role. Admins should be promoted by setting
-    app_metadata.role = "admin" in Supabase.
+    New accounts always receive the user role in public.users unless promoted later.
     """
     metadata: Dict[str, Any] = {}
     if request.full_name:
         metadata["full_name"] = request.full_name
 
-    try:
-        auth_response = get_supabase_auth_client().auth.sign_up({
-            "email": request.email,
-            "password": request.password,
-            "options": {"data": metadata},
-        })
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if get_settings().auth_email_confirm_on_signup:
+        try:
+            auth_response = get_supabase_auth_client().auth.sign_up({
+                "email": request.email,
+                "password": request.password,
+                "options": {"data": metadata},
+            })
+        except Exception as e:
+            detail = str(e)
+            if "rate limit" in detail.lower():
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        "Supabase email confirmation rate limit exceeded. "
+                        "Wait before retrying, or set AUTH_EMAIL_CONFIRM_ON_SIGNUP=false for local development."
+                    ),
+                )
+            raise HTTPException(status_code=400, detail=detail)
+    else:
+        try:
+            auth_response = get_supabase_client().auth.admin.create_user({
+                "email": request.email,
+                "password": request.password,
+                "email_confirm": True,
+                "user_metadata": metadata,
+            })
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     session = _get_attr(auth_response, "session")
     if session:

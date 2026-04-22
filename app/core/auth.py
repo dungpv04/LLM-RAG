@@ -1,15 +1,17 @@
 """Supabase authentication and authorization helpers."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from app.db.dependencies import get_supabase_auth_client
+from app.db.dependencies import get_supabase_auth_client, get_supabase_client
+from app.db.repository import get_user_repository
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
+Role = Literal["admin", "user"]
 
 
 class AuthenticatedUser(BaseModel):
@@ -29,21 +31,56 @@ def _get_attr(obj: Any, name: str, default: Any = None) -> Any:
     return getattr(obj, name, default)
 
 
-def _extract_role(user: Any) -> str:
-    """Resolve application role from Supabase metadata."""
+def _extract_role_from_metadata(user: Any) -> Role:
+    """Resolve application role from Supabase auth metadata."""
     app_metadata = _get_attr(user, "app_metadata", {}) or {}
-
     role = app_metadata.get("role") or "user"
     roles = app_metadata.get("roles") or []
 
     if role == "admin" or "admin" in roles:
         return "admin"
-
     return "user"
 
 
-def _to_authenticated_user(user: Any) -> AuthenticatedUser:
-    """Convert a Supabase user object into local auth context."""
+def sync_user_record_from_supabase_user(
+    user: Any,
+    default_role: Role = "user",
+) -> Dict[str, Any]:
+    """
+    Ensure a public.users record exists for a Supabase auth user.
+
+    Existing admin users keep their admin role even if the auth metadata is stale.
+    """
+    user_id = _get_attr(user, "id")
+    email = _get_attr(user, "email")
+    if not user_id or not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Supabase user is missing required identity fields",
+        )
+
+    user_metadata = _get_attr(user, "user_metadata", {}) or {}
+    full_name = user_metadata.get("full_name") or user_metadata.get("name")
+
+    user_repo = get_user_repository(get_supabase_client())
+    existing = user_repo.get_by_id(str(user_id))
+
+    role: Role = default_role
+    if existing and existing.get("role") == "admin":
+        role = "admin"
+    elif _extract_role_from_metadata(user) == "admin":
+        role = "admin"
+
+    return user_repo.upsert_user(
+        user_id=str(user_id),
+        email=str(email),
+        full_name=str(full_name) if full_name else None,
+        role=role,
+    )
+
+
+def to_authenticated_user(user: Any) -> AuthenticatedUser:
+    """Convert a Supabase user object into local auth context backed by public.users."""
     user_id = _get_attr(user, "id")
     if not user_id:
         raise HTTPException(
@@ -51,10 +88,15 @@ def _to_authenticated_user(user: Any) -> AuthenticatedUser:
             detail="Invalid authenticated user",
         )
 
+    app_user = sync_user_record_from_supabase_user(
+        user,
+        default_role=_extract_role_from_metadata(user),
+    )
+
     return AuthenticatedUser(
         id=str(user_id),
         email=_get_attr(user, "email"),
-        role=_extract_role(user),
+        role=str(app_user.get("role") or "user"),
         app_metadata=_get_attr(user, "app_metadata", {}) or {},
         user_metadata=_get_attr(user, "user_metadata", {}) or {},
     )
@@ -110,7 +152,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return _to_authenticated_user(user)
+    return to_authenticated_user(user)
 
 
 async def require_admin(

@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     supabase_url: str = Field(..., description="Supabase project URL")
     supabase_anon_key: str = Field(..., description="Supabase anonymous key")
     supabase_service_key: str = Field(..., description="Supabase service role key")
+    auth_email_confirm_on_signup: bool = Field(
+        False,
+        description="If true, use Supabase public signup and email confirmation. If false, create confirmed users server-side."
+    )
 
     # Redis
     redis_url: str = Field(..., description="Redis connection URL")

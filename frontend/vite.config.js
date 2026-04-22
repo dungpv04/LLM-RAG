@@ -12,15 +12,19 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       proxy: {
         '/chat': {
-          target: env.VITE_BACKEND_URL || 'http://localhost:8009',
+          target: env.VITE_BACKEND_URL || 'http://localhost:8000',
+          changeOrigin: true,
+        },
+        '/auth': {
+          target: env.VITE_BACKEND_URL || 'http://localhost:8000',
           changeOrigin: true,
         },
         '/documents': {
-          target: env.VITE_BACKEND_URL || 'http://localhost:8009',
+          target: env.VITE_BACKEND_URL || 'http://localhost:8000',
           changeOrigin: true,
         },
         '/rag': {
-          target: env.VITE_BACKEND_URL || 'http://localhost:8009',
+          target: env.VITE_BACKEND_URL || 'http://localhost:8000',
           changeOrigin: true,
         },
       },

@@ -17,10 +17,10 @@ function SessionItem({ session, isActive, onSelect, onDelete, index }: SessionIt
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
 
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
+    if (minutes < 1) return 'Vừa xong';
+    if (minutes < 60) return `${minutes} phút trước`;
+    if (hours < 24) return `${hours} giờ trước`;
+    if (days < 7) return `${days} ngày trước`;
 
     return new Date(date).toLocaleDateString();
   };
@@ -72,7 +72,7 @@ function SessionItem({ session, isActive, onSelect, onDelete, index }: SessionIt
               {session.preview}
               {session.streaming && (
                 <span className={`ml-2 text-xs ${isActive ? 'text-white/80' : 'text-blue-600 dark:text-blue-400'}`}>
-                  (processing...)
+                  (đang xử lý...)
                 </span>
               )}
             </div>
@@ -80,9 +80,9 @@ function SessionItem({ session, isActive, onSelect, onDelete, index }: SessionIt
               text-xs flex items-center gap-2
               ${isActive ? 'text-white/80' : 'text-gray-500 dark:text-gray-400'}
             `}>
-              <span>{formatTimestamp(session.updatedAt)}</span>
+                <span>{formatTimestamp(session.updatedAt)}</span>
               {session.messages.length > 0 && (
-                <span>• {Math.ceil(session.messages.length / 2)} msgs</span>
+                <span>• {Math.ceil(session.messages.length / 2)} tin nhắn</span>
               )}
             </div>
           </div>
@@ -104,7 +104,7 @@ function SessionItem({ session, isActive, onSelect, onDelete, index }: SessionIt
               : 'bg-gray-100 dark:bg-gray-700 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-500 hover:text-red-600 dark:hover:text-red-400'
             }
           `}
-          title="Delete conversation"
+          title="Xóa cuộc trò chuyện"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
@@ -133,7 +133,7 @@ export function HistoryPanel({
         <div className="flex items-center gap-2">
           <Clock className="w-4 h-4 text-gray-600 dark:text-gray-400" />
           <h2 className="font-semibold text-sm text-gray-900 dark:text-gray-100">
-            All Chats
+            Lịch sử trò chuyện
           </h2>
         </div>
         <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -156,10 +156,10 @@ export function HistoryPanel({
               <Clock className="w-6 h-6 text-gray-400 dark:text-gray-600" />
             </div>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              No conversations yet
+              Chưa có cuộc trò chuyện nào
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              Start a new chat to begin
+              Hãy bắt đầu một cuộc trò chuyện mới
             </p>
           </div>
         ) : (
@@ -182,11 +182,11 @@ export function HistoryPanel({
           <p className="text-xs text-gray-500 dark:text-gray-400">
             {sessions.filter(s => s.streaming).length > 0 && (
               <span className="text-blue-600 dark:text-blue-400">
-                {sessions.filter(s => s.streaming).length} processing
+                {sessions.filter(s => s.streaming).length} đang xử lý
                 {sessions.length > sessions.filter(s => s.streaming).length && ' • '}
               </span>
             )}
-            {sessions.length} total
+            Tổng cộng {sessions.length}
           </p>
         </div>
       )}

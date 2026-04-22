@@ -2,8 +2,8 @@
 
 import json
 import uuid
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from datetime import datetime
+from typing import List, Optional, Dict, Any, cast
 from redis import Redis
 
 
@@ -57,15 +57,19 @@ class ChatSession:
         self.redis = redis_client
         self.session_ttl = session_ttl
 
-    def _get_session_key(self, session_id: str) -> str:
+    def _get_user_scope(self, user_id: Optional[str]) -> str:
+        """Get Redis key scope for a user."""
+        return user_id or "anonymous"
+
+    def _get_session_key(self, session_id: str, user_id: Optional[str] = None) -> str:
         """Get Redis key for session."""
-        return f"chat:session:{session_id}:messages"
+        return f"chat:user:{self._get_user_scope(user_id)}:session:{session_id}:messages"
 
-    def _get_metadata_key(self, session_id: str) -> str:
+    def _get_metadata_key(self, session_id: str, user_id: Optional[str] = None) -> str:
         """Get Redis key for session metadata."""
-        return f"chat:session:{session_id}:metadata"
+        return f"chat:user:{self._get_user_scope(user_id)}:session:{session_id}:metadata"
 
-    def create_session(self) -> str:
+    def create_session(self, user_id: Optional[str] = None) -> str:
         """
         Create a new chat session.
 
@@ -78,10 +82,11 @@ class ChatSession:
         metadata = {
             "created_at": datetime.utcnow().isoformat(),
             "last_active": datetime.utcnow().isoformat(),
-            "message_count": 0
+            "message_count": 0,
+            "user_id": user_id
         }
 
-        metadata_key = self._get_metadata_key(session_id)
+        metadata_key = self._get_metadata_key(session_id, user_id)
         self.redis.setex(
             metadata_key,
             self.session_ttl,
@@ -93,7 +98,8 @@ class ChatSession:
     def add_message(
         self,
         session_id: str,
-        message: ChatMessage
+        message: ChatMessage,
+        user_id: Optional[str] = None
     ) -> None:
         """
         Add a message to the session.
@@ -102,7 +108,7 @@ class ChatSession:
             session_id: Session ID
             message: Chat message to add
         """
-        session_key = self._get_session_key(session_id)
+        session_key = self._get_session_key(session_id, user_id)
 
         # Add message to list
         self.redis.rpush(session_key, json.dumps(message.to_dict()))
@@ -111,8 +117,8 @@ class ChatSession:
         self.redis.expire(session_key, self.session_ttl)
 
         # Update metadata
-        metadata_key = self._get_metadata_key(session_id)
-        metadata_json = self.redis.get(metadata_key)
+        metadata_key = self._get_metadata_key(session_id, user_id)
+        metadata_json = cast(Any, self.redis.get(metadata_key))
 
         if metadata_json:
             metadata = json.loads(metadata_json)
@@ -128,7 +134,8 @@ class ChatSession:
     def get_messages(
         self,
         session_id: str,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        user_id: Optional[str] = None
     ) -> List[ChatMessage]:
         """
         Get messages from a session.
@@ -140,14 +147,14 @@ class ChatSession:
         Returns:
             List of chat messages
         """
-        session_key = self._get_session_key(session_id)
+        session_key = self._get_session_key(session_id, user_id)
 
         if limit:
             # Get last N messages
-            messages_json = self.redis.lrange(session_key, -limit, -1)
+            messages_json = cast(List[Any], self.redis.lrange(session_key, -limit, -1))
         else:
             # Get all messages
-            messages_json = self.redis.lrange(session_key, 0, -1)
+            messages_json = cast(List[Any], self.redis.lrange(session_key, 0, -1))
 
         messages = [
             ChatMessage.from_dict(json.loads(msg))
@@ -155,8 +162,8 @@ class ChatSession:
         ]
 
         # Update last_active
-        metadata_key = self._get_metadata_key(session_id)
-        metadata_json = self.redis.get(metadata_key)
+        metadata_key = self._get_metadata_key(session_id, user_id)
+        metadata_json = cast(Any, self.redis.get(metadata_key))
 
         if metadata_json:
             metadata = json.loads(metadata_json)
@@ -169,7 +176,7 @@ class ChatSession:
 
         return messages
 
-    def get_metadata(self, session_id: str) -> Optional[Dict[str, Any]]:
+    def get_metadata(self, session_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Get session metadata.
 
@@ -179,15 +186,15 @@ class ChatSession:
         Returns:
             Metadata dictionary or None if session doesn't exist
         """
-        metadata_key = self._get_metadata_key(session_id)
-        metadata_json = self.redis.get(metadata_key)
+        metadata_key = self._get_metadata_key(session_id, user_id)
+        metadata_json = cast(Any, self.redis.get(metadata_key))
 
         if metadata_json:
             return json.loads(metadata_json)
 
         return None
 
-    def session_exists(self, session_id: str) -> bool:
+    def session_exists(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Check if session exists.
 
@@ -197,18 +204,18 @@ class ChatSession:
         Returns:
             True if session exists
         """
-        metadata_key = self._get_metadata_key(session_id)
-        return self.redis.exists(metadata_key) > 0
+        metadata_key = self._get_metadata_key(session_id, user_id)
+        return cast(int, self.redis.exists(metadata_key)) > 0
 
-    def clear_session(self, session_id: str) -> None:
+    def clear_session(self, session_id: str, user_id: Optional[str] = None) -> None:
         """
         Clear all messages from a session (for "New Chat").
 
         Args:
             session_id: Session ID
         """
-        session_key = self._get_session_key(session_id)
-        metadata_key = self._get_metadata_key(session_id)
+        session_key = self._get_session_key(session_id, user_id)
+        metadata_key = self._get_metadata_key(session_id, user_id)
 
         # Delete messages
         self.redis.delete(session_key)
@@ -217,7 +224,8 @@ class ChatSession:
         metadata = {
             "created_at": datetime.utcnow().isoformat(),
             "last_active": datetime.utcnow().isoformat(),
-            "message_count": 0
+            "message_count": 0,
+            "user_id": user_id
         }
 
         self.redis.setex(
@@ -226,14 +234,14 @@ class ChatSession:
             json.dumps(metadata)
         )
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
         """
         Delete a session completely.
 
         Args:
             session_id: Session ID
         """
-        session_key = self._get_session_key(session_id)
-        metadata_key = self._get_metadata_key(session_id)
+        session_key = self._get_session_key(session_id, user_id)
+        metadata_key = self._get_metadata_key(session_id, user_id)
 
         self.redis.delete(session_key, metadata_key)

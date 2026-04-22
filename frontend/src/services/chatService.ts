@@ -1,31 +1,23 @@
 import { api } from './api';
-
-interface SendMessageResponse {
-  response: string;
-}
-
-interface HistoryResponse {
-  history: any[];
-}
+import type { ChatResponse } from '../types';
 
 interface SessionResponse {
   session_id: string;
 }
 
 export const chatService = {
-  async sendMessage(message: string): Promise<SendMessageResponse> {
-    return api.post<SendMessageResponse>('/chat/send', { message });
+  async sendMessage(message: string, sessionId?: string): Promise<ChatResponse> {
+    return api.post<ChatResponse>('/chat/send', {
+      message,
+      session_id: sessionId,
+    });
   },
 
-  async getHistory(): Promise<HistoryResponse> {
-    return api.get<HistoryResponse>('/chat/history');
+  streamUrl(message: string): string {
+    return `/chat/stream?message=${encodeURIComponent(message)}`;
   },
 
   async newSession(): Promise<SessionResponse> {
     return api.post<SessionResponse>('/chat/new', {});
-  },
-
-  async deleteSession(): Promise<void> {
-    return api.delete<void>('/chat/session');
   },
 };

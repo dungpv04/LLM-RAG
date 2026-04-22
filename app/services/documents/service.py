@@ -6,7 +6,9 @@ from supabase import Client
 from app.services.pdf_processor.processor import PDFProcessor
 from app.services.embedding import EmbeddingService
 from app.services.storage import StorageService
+from app.services.rag.cache_registry import delete_cache_entries_for_document
 from app.db.repository import DocumentRepository
+from app.db.processing_status import get_processing_status_repository
 
 
 class DocumentService:
@@ -44,6 +46,53 @@ class DocumentService:
             List of document names
         """
         return self.doc_repository.list_documents()
+
+    def list_document_summaries(self) -> List[Dict[str, Any]]:
+        """
+        List admin-facing document summaries without exposing embedded chunks.
+
+        Returns:
+            List of document summaries
+        """
+        return self.doc_repository.list_document_summaries()
+
+    def get_document_content(self, document_name: str) -> Dict[str, Any]:
+        """
+        Read the full extracted content for a document.
+
+        Args:
+            document_name: Name of the document to read
+
+        Returns:
+            Document content and file metadata
+
+        Raises:
+            ValueError: If document doesn't exist
+        """
+        chunks = self.doc_repository.get_chunks_by_name(document_name)
+        if not chunks:
+            raise ValueError(f"Document '{document_name}' not found")
+
+        chunks = sorted(chunks, key=lambda chunk: chunk.get("chunk_id", 0))
+        first_metadata = next(
+            (chunk.get("metadata") for chunk in chunks if isinstance(chunk.get("metadata"), dict)),
+            {},
+        )
+        pages = sorted({
+            page
+            for chunk in chunks
+            for page in (chunk.get("pages") or [])
+            if isinstance(page, int)
+        })
+
+        return {
+            "document_name": document_name,
+            "content": "\n\n".join(chunk.get("content", "") for chunk in chunks if chunk.get("content")),
+            "chunks_count": len(chunks),
+            "storage_path": first_metadata.get("storage_path") if isinstance(first_metadata, dict) else None,
+            "public_url": first_metadata.get("public_url") if isinstance(first_metadata, dict) else None,
+            "pages": pages,
+        }
 
     def upload_document(
         self,
@@ -107,22 +156,38 @@ class DocumentService:
         markdown_content, pdf_metadata = self.pdf_processor.process_pdf(file_path)
         chunks = self.pdf_processor.chunk_text_with_pages(markdown_content, pdf_metadata)
 
-        # Store chunks with embeddings
+        embedded_chunks = []
         for i, chunk in enumerate(chunks):
             chunk_text = chunk.get("text", "")
             embedding = self.embedding_service.embed_text(chunk_text)
-            self.doc_repository.insert_chunk(
-                document_name=document_name,
-                chunk_id=i,
-                content=chunk_text,
-                embedding=embedding,
-                metadata={
+            embedded_chunks.append({
+                "chunk_id": i,
+                "content": chunk_text,
+                "embedding": embedding,
+                "metadata": {
                     **chunk.get('metadata', {}),
                     'storage_path': storage_path,
                     'public_url': public_url
                 },
-                pages=chunk.get('pages'),
-                page_range=chunk.get('page_range')
+                "pages": chunk.get('pages'),
+                "page_range": chunk.get('page_range')
+            })
+
+        # Keep each file and its embedded content as one replaceable unit.
+        if document_name in self.doc_repository.list_documents():
+            self.doc_repository.delete_by_name(document_name)
+            delete_cache_entries_for_document(document_name)
+
+        # Store chunks with embeddings
+        for chunk in embedded_chunks:
+            self.doc_repository.insert_chunk(
+                document_name=document_name,
+                chunk_id=chunk["chunk_id"],
+                content=chunk["content"],
+                embedding=chunk["embedding"],
+                metadata=chunk["metadata"],
+                pages=chunk["pages"],
+                page_range=chunk["page_range"]
             )
 
         return {
@@ -186,16 +251,35 @@ class DocumentService:
         if document_name not in documents:
             raise ValueError(f"Document '{document_name}' not found")
 
-        # Delete from database
+        chunks = self.doc_repository.get_chunks_by_name(document_name)
+        storage_paths = []
+        for chunk in chunks:
+            metadata = chunk.get("metadata")
+            if isinstance(metadata, dict) and metadata.get("storage_path"):
+                storage_paths.append(metadata["storage_path"])
+
+        # Delete embedded chunks from database
         success = self.doc_repository.delete_by_name(document_name)
 
         if success:
             # Try to delete from storage (best effort)
             try:
-                storage_path = StorageService.sanitize_storage_path(f"{document_name}.pdf")
-                self.supabase_client.storage.from_(self.storage_bucket).remove([storage_path])
+                storage_paths.append(StorageService.sanitize_storage_path(f"{document_name}.pdf"))
+                unique_paths = sorted(set(storage_paths))
+                self.supabase_client.storage.from_(self.storage_bucket).remove(unique_paths)
             except Exception:
                 # If storage deletion fails, continue (chunks are already deleted)
+                pass
+
+            try:
+                status_repo = get_processing_status_repository(self.supabase_client)
+                status_repo.delete_status(document_name)
+            except Exception:
+                pass
+
+            try:
+                delete_cache_entries_for_document(document_name)
+            except Exception:
                 pass
 
         return success

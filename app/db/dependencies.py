@@ -19,6 +19,18 @@ def get_supabase_client() -> Client:
 
 
 @lru_cache()
+def get_supabase_auth_client() -> Client:
+    """
+    Get Supabase client with anonymous key for Auth flows.
+
+    Returns:
+        Supabase client instance using anon permissions
+    """
+    settings = get_settings()
+    return create_client(settings.supabase_url, settings.supabase_anon_key)
+
+
+@lru_cache()
 def get_redis_client() -> Redis:
     """
     Get Redis client instance.

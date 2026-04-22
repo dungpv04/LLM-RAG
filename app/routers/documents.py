@@ -1,17 +1,25 @@
 """Document management API endpoints."""
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from app.core.auth import require_admin
 from app.services.documents import DocumentService, get_document_service
 from app.db.dependencies import get_supabase_client
 from app.db.repository import get_document_repository
 from app.schemas.documents import (
+    DocumentAdminListResponse,
+    DocumentContentResponse,
     DocumentListResponse,
+    DocumentSummary,
     DocumentUploadResponse,
     DocumentUploadRequest,
     DocumentDeleteResponse
 )
 
-router = APIRouter(prefix="/documents", tags=["Documents"])
+router = APIRouter(
+    prefix="/documents",
+    tags=["Documents"],
+    dependencies=[Depends(require_admin)]
+)
 
 
 @router.get("/", response_model=DocumentListResponse)
@@ -30,6 +38,46 @@ async def list_documents() -> DocumentListResponse:
         return DocumentListResponse(documents=documents, count=len(documents))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+
+
+@router.get("/admin", response_model=DocumentAdminListResponse)
+async def list_documents_for_admin(
+    service: DocumentService = Depends(get_document_service)
+) -> DocumentAdminListResponse:
+    """
+    List current documents for admin management without exposing embedded chunks.
+
+    Returns:
+        Document summaries with file metadata and chunk counts
+    """
+    try:
+        documents = service.list_document_summaries()
+        summaries = [DocumentSummary(**document) for document in documents]
+        return DocumentAdminListResponse(documents=summaries, count=len(summaries))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+
+
+@router.get("/{document_name}/content", response_model=DocumentContentResponse)
+async def read_document_content(
+    document_name: str,
+    service: DocumentService = Depends(get_document_service)
+) -> DocumentContentResponse:
+    """
+    Read a document's full extracted content for admin review.
+
+    Args:
+        document_name: Name of the document to read
+
+    Returns:
+        Full extracted content reconstructed from stored chunks
+    """
+    try:
+        return DocumentContentResponse(**service.get_document_content(document_name))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read document: {str(e)}")
 
 
 @router.post("/upload/file", response_model=DocumentUploadResponse)

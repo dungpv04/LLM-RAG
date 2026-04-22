@@ -6,47 +6,47 @@ import type { Message as MessageType } from '../../types';
 interface ChatMessagesProps {
   messages: MessageType[];
   streaming: boolean;
-  sessionId: string; // NEW: For proper component key management
+  sessionId: string;
 }
 
 export function ChatMessages({ messages, streaming, sessionId }: ChatMessagesProps) {
   const messagesEndRef = useScrollToBottom<HTMLDivElement>({
-    dependencies: [messages, streaming, sessionId], // UPDATED: Include sessionId
+    dependencies: [messages, streaming, sessionId],
     behavior: 'smooth',
   });
 
   return (
     <div
       ref={messagesEndRef}
-      className="chat-messages h-full overflow-y-auto overflow-x-hidden px-4 sm:px-6 lg:px-8 py-6"
-      key={sessionId} // NEW: Force re-render on session change
+      className="chat-messages h-full overflow-y-auto overflow-x-hidden px-4 py-6 sm:px-6 lg:px-8"
+      key={sessionId}
     >
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* Welcome Message */}
+      <div className="mx-auto max-w-4xl space-y-6">
         {messages.length === 0 && !streaming && (
           <div className="animate-[fadeIn_0.5s_ease-out]">
-            <div className="dark:bg-gray-900 px-6 py-6 rounded-lg dark:text-gray-300 bg-white text-gray-800 shadow-md">
-              <p className="mb-4">👋 Welcome! I can help you understand Vietnam's Electricity Master Plan VIII (PDP8).</p>
-              <p className="mb-4">Ask me about:</p>
-              <ul className="ml-6 space-y-2">
-                <li>LNG power projects and development timeline</li>
-                <li>Renewable energy targets and capacity expansion</li>
-                <li>Grid infrastructure and transmission planning</li>
-                <li>Coal phase-out and energy transition strategies</li>
-                <li>Investment requirements and financial mechanisms</li>
+            <div className="rounded-[2rem] bg-white px-6 py-6 text-gray-800 shadow-md dark:bg-gray-900 dark:text-gray-300">
+              <p className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
+                Hỏi tự nhiên, không cần chọn tài liệu.
+              </p>
+              <p className="mb-4">
+                TLU Assistant sẽ tự động chọn ngữ cảnh tài liệu phù hợp. Bạn chỉ cần mô tả câu hỏi hoặc vấn đề cần hỗ trợ.
+              </p>
+              <ul className="ml-6 space-y-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
+                <li>Giải thích quy định, chính sách và điều khoản</li>
+                <li>Câu hỏi về thủ tục, thời hạn và điều kiện áp dụng</li>
+                <li>Đối chiếu thông tin giữa nhiều tài liệu nội bộ</li>
+                <li>Tri thức do quản trị viên quản lý mà không cần người dùng biết tên file</li>
               </ul>
             </div>
           </div>
         )}
 
-        {/* Messages */}
         {messages.map((message, index) => {
-          // Only apply typewriter to the LAST assistant message AND only when actively streaming
-          const shouldAnimate = 
-            message.role === 'assistant' && 
+          const shouldAnimate =
+            message.role === 'assistant' &&
             index === messages.length - 1 &&
             streaming;
-          
+
           return (
             <Message
               key={`${sessionId}-msg-${index}`}
@@ -57,7 +57,6 @@ export function ChatMessages({ messages, streaming, sessionId }: ChatMessagesPro
           );
         })}
 
-        {/* Streaming Indicator - Only for active streaming in THIS session */}
         {streaming && <StreamingIndicator key={`${sessionId}-streaming`} />}
       </div>
     </div>

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.routers import rag, documents
-from app.api import chat
+from app.api import auth, chat
 from app.services.rag.dependencies import initialize_dspy
 
 # Initialize DSPy at module level before any async context is created
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     )
 
     # Include routers
+    app.include_router(auth.router)
     app.include_router(rag.router)
     app.include_router(documents.router)
     app.include_router(chat.router)
