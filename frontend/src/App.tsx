@@ -44,6 +44,14 @@ function AuthScreen({
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [editableField, setEditableField] = useState<'fullName' | 'email' | 'password' | null>(null);
+
+  useEffect(() => {
+    setFullName('');
+    setEmail('');
+    setPassword('');
+    setEditableField(null);
+  }, [mode]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -132,15 +140,21 @@ function AuthScreen({
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
+              <input type="text" name="fake_username" autoComplete="username" className="hidden" tabIndex={-1} />
+              <input type="password" name="fake_password" autoComplete="current-password" className="hidden" tabIndex={-1} />
               {mode === 'signup' && (
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">
                     Họ và tên
                   </span>
                   <input
+                    name="signup_full_name"
                     value={fullName}
                     onChange={(event) => setFullName(event.target.value)}
+                    onFocus={() => setEditableField('fullName')}
+                    readOnly={editableField !== 'fullName'}
+                    autoComplete="off"
                     className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                     placeholder="Nguyen Van A"
                   />
@@ -153,8 +167,12 @@ function AuthScreen({
                 </span>
                 <input
                   type="email"
+                  name={mode === 'login' ? 'login_email_input' : 'signup_email_input'}
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
+                  onFocus={() => setEditableField('email')}
+                  readOnly={editableField !== 'email'}
+                  autoComplete="off"
                   className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                   placeholder="you@example.com"
                   required
@@ -167,8 +185,12 @@ function AuthScreen({
                   </span>
                 <input
                   type="password"
+                  name={mode === 'login' ? 'login_password_input' : 'signup_password_input'}
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
+                  onFocus={() => setEditableField('password')}
+                  readOnly={editableField !== 'password'}
+                  autoComplete="off"
                   className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                   placeholder="Tối thiểu 6 ký tự"
                   required
@@ -282,8 +304,8 @@ function AdminView({
   return (
     <div className="flex-1 overflow-hidden bg-white transition-colors dark:bg-gray-950">
       <div className="grid h-full min-h-0 xl:grid-cols-[360px_1fr]">
-        <div className="border-b border-gray-200 bg-gray-50/80 dark:border-gray-800 dark:bg-gray-900/60 xl:border-b-0 xl:border-r">
-          <div className="flex h-full flex-col">
+        <div className="min-h-0 border-b border-gray-200 bg-gray-50/80 dark:border-gray-800 dark:bg-gray-900/60 xl:border-b-0 xl:border-r">
+          <div className="flex h-full min-h-0 flex-col">
             <div className="border-b border-gray-200 px-5 py-5 dark:border-gray-800">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -326,7 +348,7 @@ function AdminView({
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto px-3 py-3">
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
               {loading ? (
                 <div className="flex h-32 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -402,15 +424,15 @@ function AdminView({
           </div>
         </div>
 
-        <div className="min-h-0 overflow-y-auto px-6 py-6">
+        <div className="min-h-0 overflow-hidden px-6 py-6">
           {contentLoading ? (
-            <div className="flex h-full min-h-[320px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+            <div className="flex h-full min-h-[320px] items-center justify-center overflow-y-auto text-sm text-gray-500 dark:text-gray-400">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Đang tải nội dung trích xuất...
             </div>
           ) : documentContent ? (
-            <div className="mx-auto max-w-4xl">
-              <div className="rounded-[2rem] border border-gray-200 bg-gray-50 p-6 dark:border-gray-800 dark:bg-gray-900/70">
+            <div className="mx-auto flex h-full min-h-0 max-w-4xl flex-col overflow-hidden">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-gray-200 bg-gray-50 p-6 dark:border-gray-800 dark:bg-gray-900/70">
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-2xl font-semibold text-gray-950 dark:text-white">
                     {documentContent.document_name}
@@ -425,7 +447,7 @@ function AdminView({
                   )}
                 </div>
 
-                <div className="mt-6 rounded-3xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
+                <div className="mt-6 min-h-0 flex-1 overflow-y-auto rounded-3xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
                   <pre className="whitespace-pre-wrap break-words text-sm leading-7 text-gray-700 dark:text-gray-200">
                     {documentContent.content}
                   </pre>
@@ -453,6 +475,12 @@ function AdminView({
 
 function App() {
   const { theme, toggleTheme } = useTheme();
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [view, setView] = useState<ViewMode>('chat');
+
   const {
     sessions,
     activeSessionId,
@@ -462,13 +490,7 @@ function App() {
     switchToSession,
     createNewChat,
     deleteSession,
-  } = useChat();
-
-  const [authMode, setAuthMode] = useState<AuthMode>('login');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [view, setView] = useState<ViewMode>('chat');
+  } = useChat(user?.id ?? null);
 
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);

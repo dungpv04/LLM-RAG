@@ -32,6 +32,29 @@ class ChatResponse(BaseModel):
     sources: list = Field(default_factory=list)
 
 
+class ChatSessionSummary(BaseModel):
+    """Chat session summary for history sidebar."""
+
+    session_id: str
+    created_at: Optional[str] = None
+    last_active: Optional[str] = None
+    message_count: int = 0
+    preview: str = "New Chat"
+
+
+class ChatSessionListResponse(BaseModel):
+    """List of chat sessions for the current user."""
+
+    sessions: list[ChatSessionSummary] = Field(default_factory=list)
+
+
+class ChatHistoryResponse(BaseModel):
+    """Full message history for one chat session."""
+
+    session_id: str
+    messages: list = Field(default_factory=list)
+
+
 def get_or_create_session(
     chat_session: ChatSession,
     user_id: str,
@@ -119,6 +142,7 @@ async def send_message_stream(
     message: str = Query(..., description="User message"),
     document_name: Optional[str] = Query(None, description="Optional document name to filter results"),
     session_id: Optional[str] = Cookie(None),
+    request_session_id: Optional[str] = Query(None, alias="session_id", description="Explicit session ID"),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
@@ -138,7 +162,12 @@ async def send_message_stream(
     rag_service = get_rag_service()
 
     # Get or create session
-    session_id = get_or_create_session(chat_session, current_user.id, cookie_session_id=session_id)
+    session_id = get_or_create_session(
+        chat_session,
+        current_user.id,
+        cookie_session_id=session_id,
+        request_session_id=request_session_id,
+    )
 
     # Add user message to history
     user_message = ChatMessage(role="user", content=message)
@@ -186,7 +215,7 @@ async def send_message_stream(
             # Send error event
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
-    return StreamingResponse(
+    response = StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
@@ -195,10 +224,28 @@ async def send_message_stream(
             "X-Accel-Buffering": "no"  # Disable nginx buffering
         }
     )
+    response.set_cookie(key="session_id", value=session_id, httponly=True, samesite="lax", max_age=86400)
+    return response
+
+
+@router.get("/sessions", response_model=ChatSessionListResponse)
+async def list_chat_sessions(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> ChatSessionListResponse:
+    """List all chat sessions for the current user."""
+    redis_client = get_redis_client()
+    chat_session = ChatSession(redis_client)
+
+    sessions = [
+        ChatSessionSummary(**item)
+        for item in chat_session.list_sessions(user_id=current_user.id)
+    ]
+    return ChatSessionListResponse(sessions=sessions)
 
 
 @router.get("/history")
 async def get_chat_history(
+    request_session_id: Optional[str] = Query(None, alias="session_id"),
     session_id: Optional[str] = Cookie(None),
     limit: Optional[int] = 50,
     current_user: AuthenticatedUser = Depends(get_current_user),
@@ -213,49 +260,40 @@ async def get_chat_history(
     Returns:
         List of chat messages
     """
-    if not session_id:
+    resolved_session_id = request_session_id or session_id
+    if not resolved_session_id:
         raise HTTPException(status_code=400, detail="No session ID provided")
 
     redis_client = get_redis_client()
     chat_session = ChatSession(redis_client)
 
-    if not chat_session.session_exists(session_id, user_id=current_user.id):
+    if not chat_session.session_exists(resolved_session_id, user_id=current_user.id):
         raise HTTPException(status_code=404, detail="Session not found")
 
-    messages = chat_session.get_messages(session_id, limit=limit, user_id=current_user.id)
+    messages = chat_session.get_messages(resolved_session_id, limit=limit, user_id=current_user.id)
 
-    return {
-        "session_id": session_id,
-        "messages": [msg.to_dict() for msg in messages]
-    }
+    return ChatHistoryResponse(
+        session_id=resolved_session_id,
+        messages=[msg.to_dict() for msg in messages],
+    )
 
 
 @router.post("/new")
 async def new_chat_session(
     response: Response,
-    session_id: Optional[str] = Cookie(None),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
-    Create a new chat session or clear existing one.
+    Create a new chat session.
 
     Args:
         response: FastAPI response for setting cookies
-        session_id: Session ID from cookie
-
     Returns:
         New session ID
     """
     redis_client = get_redis_client()
     chat_session = ChatSession(redis_client)
-
-    if session_id and chat_session.session_exists(session_id, user_id=current_user.id):
-        # Clear existing session
-        chat_session.clear_session(session_id, user_id=current_user.id)
-        new_session_id = session_id
-    else:
-        # Create new session
-        new_session_id = chat_session.create_session(user_id=current_user.id)
+    new_session_id = chat_session.create_session(user_id=current_user.id)
 
     # Set session cookie
     response.set_cookie(
@@ -274,6 +312,7 @@ async def send_message_stream_with_docs(
     message: str = Query(..., description="User message"),
     doc_names: str = Query(..., description="Comma-separated list of document names to filter"),
     session_id: Optional[str] = Cookie(None),
+    request_session_id: Optional[str] = Query(None, alias="session_id", description="Explicit session ID"),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
@@ -299,7 +338,12 @@ async def send_message_stream_with_docs(
     rag_service = get_rag_service()
 
     # Get or create session
-    session_id = get_or_create_session(chat_session, current_user.id, cookie_session_id=session_id)
+    session_id = get_or_create_session(
+        chat_session,
+        current_user.id,
+        cookie_session_id=session_id,
+        request_session_id=request_session_id,
+    )
 
     # Add user message to history
     user_message = ChatMessage(role="user", content=message)
@@ -347,7 +391,7 @@ async def send_message_stream_with_docs(
             # Send error event
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
-    return StreamingResponse(
+    response = StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
@@ -356,6 +400,8 @@ async def send_message_stream_with_docs(
             "X-Accel-Buffering": "no"  # Disable nginx buffering
         }
     )
+    response.set_cookie(key="session_id", value=session_id, httponly=True, samesite="lax", max_age=86400)
+    return response
 
 
 @router.post("/send/doc")
@@ -421,6 +467,7 @@ async def send_message_with_docs(
 @router.delete("/session")
 async def delete_session(
     response: Response,
+    request_session_id: Optional[str] = Query(None, alias="session_id"),
     session_id: Optional[str] = Cookie(None),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
@@ -434,18 +481,20 @@ async def delete_session(
     Returns:
         Success message
     """
-    if not session_id:
+    resolved_session_id = request_session_id or session_id
+    if not resolved_session_id:
         raise HTTPException(status_code=400, detail="No session ID provided")
 
     redis_client = get_redis_client()
     chat_session = ChatSession(redis_client)
 
-    if not chat_session.session_exists(session_id, user_id=current_user.id):
+    if not chat_session.session_exists(resolved_session_id, user_id=current_user.id):
         raise HTTPException(status_code=404, detail="Session not found")
 
-    chat_session.delete_session(session_id, user_id=current_user.id)
+    chat_session.delete_session(resolved_session_id, user_id=current_user.id)
 
     # Clear session cookie
-    response.delete_cookie(key="session_id")
+    if resolved_session_id == session_id:
+        response.delete_cookie(key="session_id")
 
     return {"message": "Session deleted successfully"}

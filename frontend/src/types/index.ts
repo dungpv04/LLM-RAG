@@ -24,6 +24,23 @@ export interface ChatSession {
   preview: string;
 }
 
+export interface ChatSessionSummaryResponse {
+  session_id: string;
+  created_at?: string | null;
+  last_active?: string | null;
+  message_count: number;
+  preview: string;
+}
+
+export interface ChatSessionListResponse {
+  sessions: ChatSessionSummaryResponse[];
+}
+
+export interface ChatHistoryResponse {
+  session_id: string;
+  messages: Message[];
+}
+
 export interface HistoryItem {
   id: number;
   timestamp: string;

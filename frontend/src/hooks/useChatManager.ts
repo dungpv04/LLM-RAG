@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { chatService } from '../services/chatService';
-import type { ChatSession, Message, StreamData, UseChatReturn } from '../types';
+import type {
+  ChatSession,
+  ChatSessionSummaryResponse,
+  Message,
+  StreamData,
+  UseChatReturn,
+} from '../types';
 
-const STORAGE_KEY = 'chat_sessions';
-
-function createDraftSession(): ChatSession {
+function createDraftSession(sessionId?: string): ChatSession {
   const timestamp = new Date().toISOString();
 
   return {
-    id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: sessionId || `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     messages: [],
     streaming: false,
     createdAt: timestamp,
@@ -17,54 +21,25 @@ function createDraftSession(): ChatSession {
   };
 }
 
-export function useChat(): UseChatReturn {
-  const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+function mapSessionSummary(session: ChatSessionSummaryResponse): ChatSession {
+  return {
+    id: session.session_id,
+    messages: [],
+    streaming: false,
+    createdAt: session.created_at || new Date().toISOString(),
+    updatedAt: session.last_active || session.created_at || new Date().toISOString(),
+    preview: session.preview || 'Cuộc trò chuyện mới',
+  };
+}
 
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as ChatSession[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      } catch {
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    }
-
-    return [createDraftSession()];
-  });
-
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as ChatSession[];
-        if (Array.isArray(parsed) && parsed[0]?.id) {
-          return parsed[0].id;
-        }
-      } catch {
-        return '';
-      }
-    }
-
-    return '';
-  });
+export function useChat(userId: string | null): UseChatReturn {
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const streamingSessionIdRef = useRef<string | null>(null);
 
   const currentSession = sessions.find((session) => session.id === activeSessionId) || sessions[0] || null;
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-  }, [sessions]);
-
-  useEffect(() => {
-    if (!activeSessionId && sessions[0]?.id) {
-      setActiveSessionId(sessions[0].id);
-    }
-  }, [activeSessionId, sessions]);
 
   const updateSession = useCallback((sessionId: string, updater: (session: ChatSession) => ChatSession) => {
     setSessions((previous) =>
@@ -88,21 +63,82 @@ export function useChat(): UseChatReturn {
     }
   }, [updateSession]);
 
+  const loadSessions = useCallback(async () => {
+    if (!userId) {
+      setSessions([]);
+      setActiveSessionId('');
+      return;
+    }
+
+    const response = await chatService.listSessions();
+    const nextSessions = response.sessions.map(mapSessionSummary);
+    setSessions(nextSessions);
+    setActiveSessionId((previous) => {
+      if (previous && nextSessions.some((session) => session.id === previous)) {
+        return previous;
+      }
+      return nextSessions[0]?.id || '';
+    });
+  }, [userId]);
+
+  const loadHistory = useCallback(async (sessionId: string) => {
+    const history = await chatService.getHistory(sessionId);
+    updateSession(sessionId, (session) => ({
+      ...session,
+      messages: history.messages,
+      updatedAt: new Date().toISOString(),
+    }));
+  }, [updateSession]);
+
+  useEffect(() => {
+    cleanupStream();
+    setError(null);
+    void loadSessions();
+  }, [cleanupStream, loadSessions, userId]);
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      return;
+    }
+
+    const targetSession = sessions.find((session) => session.id === activeSessionId);
+    if (!targetSession) {
+      return;
+    }
+
+    if (targetSession.messages.length === 0 && !targetSession.streaming) {
+      void loadHistory(activeSessionId).catch((err: Error) => {
+        setError(err.message);
+      });
+    }
+  }, [activeSessionId, loadHistory, sessions]);
+
   const sendMessage = useCallback(async (message: string) => {
-    if (!currentSession) {
+    if (!userId) {
       return;
     }
 
     cleanupStream();
-
-    const sessionId = currentSession.id;
     setError(null);
 
+    let targetSession = currentSession;
+    if (!targetSession) {
+      const created = await chatService.newSession();
+      targetSession = createDraftSession(created.session_id);
+      setSessions([targetSession]);
+      setActiveSessionId(created.session_id);
+    }
+
+    const sessionId = targetSession.id;
     const userMessage: Message = {
       role: 'user',
       content: message,
       timestamp: new Date().toISOString(),
     };
+
+    if (!sessions.some((session) => session.id === sessionId)) {
+      setSessions([targetSession]);
+    }
 
     updateSession(sessionId, (session) => ({
       ...session,
@@ -115,13 +151,9 @@ export function useChat(): UseChatReturn {
     streamingSessionIdRef.current = sessionId;
 
     try {
-      if (sessionId.startsWith('draft-')) {
-        await chatService.newSession();
-      }
-
       let fullAnswer = '';
 
-      eventSourceRef.current = new EventSource(chatService.streamUrl(message), {
+      eventSourceRef.current = new EventSource(chatService.streamUrlForSession(message, sessionId), {
         withCredentials: true,
       });
 
@@ -192,23 +224,17 @@ export function useChat(): UseChatReturn {
             }),
           );
         } else if (data.type === 'done') {
-          if (data.session_id) {
-            setSessions((previous) =>
-              previous.map((session) =>
-                session.id === sessionId
-                  ? {
-                      ...session,
-                      id: data.session_id!,
-                      streaming: false,
-                      updatedAt: new Date().toISOString(),
-                    }
-                  : session,
-              ),
-            );
-            setActiveSessionId(data.session_id);
+          updateSession(sessionId, (session) => ({
+            ...session,
+            streaming: false,
+            updatedAt: new Date().toISOString(),
+          }));
+          streamingSessionIdRef.current = null;
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
           }
-
-          cleanupStream();
+          void loadSessions().catch(() => undefined);
         } else if (data.type === 'error') {
           setError(data.message || 'Đã xảy ra lỗi');
           cleanupStream();
@@ -223,40 +249,50 @@ export function useChat(): UseChatReturn {
       setError((err as Error).message);
       cleanupStream();
     }
-  }, [cleanupStream, currentSession, updateSession]);
+  }, [cleanupStream, currentSession, loadSessions, sessions, updateSession, userId]);
 
   const switchToSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId);
     setError(null);
   }, []);
 
-  const createNewChat = useCallback(() => {
-    cleanupStream();
-    const newSession = createDraftSession();
-    setSessions((previous) => [newSession, ...previous]);
-    setActiveSessionId(newSession.id);
-    setError(null);
-  }, [cleanupStream]);
-
-  const deleteSession = useCallback((sessionId: string) => {
-    if (streamingSessionIdRef.current === sessionId) {
-      cleanupStream();
+  const createNewChat = useCallback(async () => {
+    if (!userId) {
+      return;
     }
 
-    setSessions((previous) => {
-      const filtered = previous.filter((session) => session.id !== sessionId);
-      if (filtered.length === 0) {
-        const fallback = createDraftSession();
-        setActiveSessionId(fallback.id);
-        return [fallback];
+    cleanupStream();
+    setError(null);
+
+    try {
+      const response = await chatService.newSession();
+      const newSession = createDraftSession(response.session_id);
+      setSessions((previous) => [newSession, ...previous]);
+      setActiveSessionId(newSession.id);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, [cleanupStream, userId]);
+
+  const deleteSession = useCallback((sessionId: string) => {
+    void (async () => {
+      if (streamingSessionIdRef.current === sessionId) {
+        cleanupStream();
       }
 
-      if (sessionId === activeSessionId) {
-        setActiveSessionId(filtered[0].id);
+      try {
+        await chatService.deleteSession(sessionId);
+        setSessions((previous) => {
+          const filtered = previous.filter((session) => session.id !== sessionId);
+          if (sessionId === activeSessionId) {
+            setActiveSessionId(filtered[0]?.id || '');
+          }
+          return filtered;
+        });
+      } catch (err) {
+        setError((err as Error).message);
       }
-
-      return filtered;
-    });
+    })();
   }, [activeSessionId, cleanupStream]);
 
   useEffect(() => {

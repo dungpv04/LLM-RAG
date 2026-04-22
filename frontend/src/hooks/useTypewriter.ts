@@ -22,38 +22,47 @@ export function useTypewriter({
   const [isTyping, setIsTyping] = useState(false);
   const indexRef = useRef(0);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const previousTextRef = useRef('');
 
   useEffect(() => {
-    // Reset when text changes
-    setDisplayedText('');
-    indexRef.current = 0;
-    setIsTyping(true);
-
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
 
     if (!text) {
+      setDisplayedText('');
+      previousTextRef.current = '';
+      indexRef.current = 0;
       setIsTyping(false);
       return;
     }
 
-    const startTyping = () => {
-      const type = () => {
-        if (indexRef.current < text.length) {
-          setDisplayedText(text.slice(0, indexRef.current + 1));
-          indexRef.current++;
-          timeoutRef.current = setTimeout(type, speed);
-        } else {
-          setIsTyping(false);
-          onComplete?.();
-        }
-      };
+    const previousText = previousTextRef.current;
 
-      timeoutRef.current = setTimeout(type, delay);
+    if (!text.startsWith(previousText)) {
+      setDisplayedText('');
+      indexRef.current = 0;
+    } else {
+      setDisplayedText(previousText);
+      indexRef.current = previousText.length;
+    }
+
+    previousTextRef.current = text;
+    setIsTyping(indexRef.current < text.length);
+
+    const type = () => {
+      if (indexRef.current < text.length) {
+        const nextIndex = indexRef.current + 1;
+        setDisplayedText(text.slice(0, nextIndex));
+        indexRef.current = nextIndex;
+        timeoutRef.current = setTimeout(type, speed);
+      } else {
+        setIsTyping(false);
+        onComplete?.();
+      }
     };
 
-    startTyping();
+    timeoutRef.current = setTimeout(type, delay);
 
     return () => {
       if (timeoutRef.current) {

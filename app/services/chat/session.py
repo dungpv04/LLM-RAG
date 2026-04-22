@@ -69,6 +69,10 @@ class ChatSession:
         """Get Redis key for session metadata."""
         return f"chat:user:{self._get_user_scope(user_id)}:session:{session_id}:metadata"
 
+    def _get_metadata_pattern(self, user_id: Optional[str] = None) -> str:
+        """Get Redis scan pattern for all session metadata for a user."""
+        return f"chat:user:{self._get_user_scope(user_id)}:session:*:metadata"
+
     def create_session(self, user_id: Optional[str] = None) -> str:
         """
         Create a new chat session.
@@ -83,7 +87,8 @@ class ChatSession:
             "created_at": datetime.utcnow().isoformat(),
             "last_active": datetime.utcnow().isoformat(),
             "message_count": 0,
-            "user_id": user_id
+            "user_id": user_id,
+            "preview": "New Chat",
         }
 
         metadata_key = self._get_metadata_key(session_id, user_id)
@@ -124,6 +129,11 @@ class ChatSession:
             metadata = json.loads(metadata_json)
             metadata["last_active"] = datetime.utcnow().isoformat()
             metadata["message_count"] = metadata.get("message_count", 0) + 1
+            if (
+                message.role == "user"
+                and (not metadata.get("preview") or metadata.get("preview") == "New Chat")
+            ):
+                metadata["preview"] = message.content[:60]
 
             self.redis.setex(
                 metadata_key,
@@ -194,6 +204,44 @@ class ChatSession:
 
         return None
 
+    def list_sessions(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List all sessions for a user ordered by last activity descending.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            Session metadata summaries
+        """
+        pattern = self._get_metadata_pattern(user_id)
+        session_summaries: List[Dict[str, Any]] = []
+
+        for metadata_key in self.redis.scan_iter(match=pattern):
+            metadata_json = cast(Any, self.redis.get(metadata_key))
+            if not metadata_json:
+                continue
+
+            metadata = json.loads(metadata_json)
+            parts = str(metadata_key).split(":")
+            if len(parts) < 2:
+                continue
+
+            session_id = parts[-2]
+            session_summaries.append({
+                "session_id": session_id,
+                "created_at": metadata.get("created_at"),
+                "last_active": metadata.get("last_active"),
+                "message_count": metadata.get("message_count", 0),
+                "preview": metadata.get("preview", "New Chat"),
+            })
+
+        session_summaries.sort(
+            key=lambda item: str(item.get("last_active") or ""),
+            reverse=True,
+        )
+        return session_summaries
+
     def session_exists(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Check if session exists.
@@ -225,7 +273,8 @@ class ChatSession:
             "created_at": datetime.utcnow().isoformat(),
             "last_active": datetime.utcnow().isoformat(),
             "message_count": 0,
-            "user_id": user_id
+            "user_id": user_id,
+            "preview": "New Chat",
         }
 
         self.redis.setex(
